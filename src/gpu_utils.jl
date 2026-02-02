@@ -2,6 +2,7 @@ module GPUUtils
 
 using Symbolics: Symbolics
 using SymbolicUtils: SymbolicUtils
+using SymbolicUtils.Rewriters: postwalk
 using MLDataDevices: get_device, AbstractGPUDevice
 
 export transform_power_ops, should_apply_gpu_transform
@@ -23,7 +24,7 @@ function transform_power_ops(expr)
     was_num = expr isa Symbolics.Num
     base_expr = was_num ? SymbolicUtils.unwrap(expr) : expr
 
-    transformed = SymbolicUtils.postwalk(base_expr) do node
+    transformed = postwalk(base_expr) do node
         # Process BasicSymbolic nodes (symbolic expressions in Symbolics v6+)
         if node isa SymbolicUtils.BasicSymbolic
             op = Symbolics.operation(node)
