@@ -16,7 +16,8 @@ const gpud = CUDA.functional() ? gpu_device() : nothing
 export gpud, callback, transform_power_ops, should_apply_gpu_transform
 end
 
-@testitem "Symbolic Power Transformation" tags = [:gpu_nonlinear] setup = [GPUNonlinearTestSetup] begin
+@testitem "Symbolic Power Transformation" tags = [:gpu_nonlinear] setup =
+    [GPUNonlinearTestSetup] begin
     using Symbolics
     using ModelingToolkit
 
@@ -26,12 +27,12 @@ end
     # Test basic transformation: u^2 → u * u
     expr2 = u(x)^2
     transformed2 = transform_power_ops(expr2)
-    @test Symbolics.simplify(transformed2 - u(x)*u(x)) == 0
+    @test Symbolics.simplify(transformed2 - u(x) * u(x)) == 0
 
     # Test: u^3 → u * u * u
     expr3 = u(x)^3
     transformed3 = transform_power_ops(expr3)
-    @test Symbolics.simplify(transformed3 - u(x)*u(x)*u(x)) == 0
+    @test Symbolics.simplify(transformed3 - u(x) * u(x) * u(x)) == 0
 
     # Test derivative compatibility: symbolic differentiation should work after transformation
     expr_deriv = Dx(u(x)^3)
@@ -40,7 +41,7 @@ end
 
     # Should not crash and should produce a valid expression
     @test !isnothing(expanded)
-    @test expanded isa Union{Num, SymbolicUtils.Term}
+    @test expanded isa Union{Num,SymbolicUtils.Term}
 
     # Test non-integer exponents: should not be transformed
     expr_nonint = u(x)^2.5
@@ -70,7 +71,8 @@ end
     end
 end
 
-@testitem "Nonlinear PDE u^2 - CUDA" tags = [:cuda, :gpu_nonlinear] setup = [GPUNonlinearTestSetup] begin
+@testitem "Nonlinear PDE u^2 - CUDA" tags = [:cuda, :gpu_nonlinear] setup =
+    [GPUNonlinearTestSetup] begin
     using CUDA
     using Random
     import DomainSets: Interval
@@ -115,7 +117,8 @@ end
     @test all(isfinite, res.u)
 end
 
-@testitem "Nonlinear PDE Dx(u^3) - CUDA" tags = [:cuda, :gpu_nonlinear] setup = [GPUNonlinearTestSetup] begin
+@testitem "Nonlinear PDE Dx(u^3) - CUDA" tags = [:cuda, :gpu_nonlinear] setup =
+    [GPUNonlinearTestSetup] begin
     using CUDA
     using Random
     import DomainSets: Interval

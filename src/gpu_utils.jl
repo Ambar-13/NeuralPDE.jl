@@ -1,8 +1,7 @@
 module GPUUtils
 
-using Symbolics: Symbolics
+using Symbolics: Symbolics, postwalk
 using SymbolicUtils: SymbolicUtils
-using SymbolicUtils.Rewriters: postwalk
 using MLDataDevices: get_device, AbstractGPUDevice
 
 export transform_power_ops, should_apply_gpu_transform
@@ -36,7 +35,8 @@ function transform_power_ops(expr)
                 exponent = args[2]
 
                 # Transform only when exponent is a literal integer or integer-valued number
-                if exponent isa Integer || (exponent isa Number && exponent == floor(exponent))
+                if exponent isa Integer ||
+                   (exponent isa Number && exponent == floor(exponent))
                     n = Int(exponent)
                     count[] += 1
 
@@ -51,7 +51,7 @@ function transform_power_ops(expr)
                         return SymbolicUtils.term(*, base, base, base)
                     else
                         # Unroll arbitrary exponents: u^n → u * u * ... * u (n factors)
-                        factors = [base for _ in 1:n]
+                        factors = [base for _ = 1:n]
                         return SymbolicUtils.term(*, factors...)
                     end
                 end
