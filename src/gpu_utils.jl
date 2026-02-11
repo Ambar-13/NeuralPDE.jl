@@ -1,81 +1,81 @@
 module GPUUtils
 
-using Symbolics: Symbolics, postwalk
-using SymbolicUtils: SymbolicUtils
 using MLDataDevices: get_device, AbstractGPUDevice
 
 export transform_power_ops, should_apply_gpu_transform
 
 """
-    transform_power_ops(expr)
+    transform_power_ops(expr::Expr)
 
-Rewrite integer powers (e.g. `u^2`, `u^3`) into explicit multiplication.
+Rewrite integer powers in loss function Expr to multiplication chains.
+E.g., `(^).(u, 2)` becomes `(*).(u, u)`.
 
-This exists to avoid NaNs observed on GPU during training for expressions
-like `u(x)^2` and `Dx(u(x)^3)` (see #914). It is not intended as a
-performance optimization.
+CUDA's `pow` function produces NaN gradients when the base is near zero,
+which causes training failures for equations like `u^2` and `Dx(u^3)`.
+Using explicit multiplication avoids this issue.
+
+See issue #914.
 """
-
 function transform_power_ops(expr)
-    count = Ref(0)
+    _rewrite_powers(expr)
+end
 
-    # Extract base expression from ModelingToolkit wrapper if present
-    was_num = expr isa Symbolics.Num
-    base_expr = was_num ? SymbolicUtils.unwrap(expr) : expr
+# Check for power operator in both forms: symbol :^ and function object ^
+_is_power_op(x) = x === :^ || x isa typeof(^)
 
-    transformed = postwalk(base_expr) do node
-        # Process BasicSymbolic nodes (symbolic expressions in Symbolics v6+)
-        if node isa SymbolicUtils.BasicSymbolic
-            op = Symbolics.operation(node)
-            args = Symbolics.arguments(node)
+# Recursively walk Expr, rewriting integer powers to multiplications
+function _rewrite_powers(node)
+    node isa Expr || return node
 
-            # Match power operations
-            if op === ^
-                base = args[1]
-                exponent = args[2]
+    # Post-order traversal: recurse first, then check patterns
+    new_args = map(_rewrite_powers, node.args)
+    ex = Expr(node.head, new_args...)
 
-                # Transform only when exponent is a literal integer or integer-valued number
-                if exponent isa Integer ||
-                   (exponent isa Number && exponent == floor(exponent))
-                    n = Int(exponent)
-                    count[] += 1
-
-                    if n == 0
-                        return 1
-                    elseif n == 1
-                        return base
-                    elseif n == 2
-                        # Use SymbolicUtils.term to prevent auto-simplification
-                        return SymbolicUtils.term(*, base, base)
-                    elseif n == 3
-                        return SymbolicUtils.term(*, base, base, base)
-                    else
-                        # Unroll arbitrary exponents: u^n → u * u * ... * u (n factors)
-                        factors = [base for _ = 1:n]
-                        return SymbolicUtils.term(*, factors...)
-                    end
-                end
-            end
+    # Broadcasted power: (^).(base, n)
+    if ex.head === :. && length(ex.args) == 2 && _is_power_op(ex.args[1]) &&
+       ex.args[2] isa Expr && ex.args[2].head === :tuple
+        tup_args = ex.args[2].args
+        if length(tup_args) == 2 && _is_positive_int(tup_args[2])
+            mul = _matching_mul(ex.args[1])
+            return _expand_power_broadcast(mul, tup_args[1], Int(tup_args[2]))
         end
-
-        return node
     end
 
-    # Debug logging
-    if count[] > 0 && get(ENV, "NEURALPDE_DEBUG", "0") == "1"
-        @info "GPU power transformation: expanded $(count[]) power operations to multiplication chains"
+    # Non-broadcasted power: (^)(base, n)
+    if ex.head === :call && length(ex.args) == 3 && _is_power_op(ex.args[1]) &&
+       _is_positive_int(ex.args[3])
+        mul = _matching_mul(ex.args[1])
+        return _expand_power_call(mul, ex.args[2], Int(ex.args[3]))
     end
 
-    # Re-attach ModelingToolkit wrapper if the input was wrapped
-    return was_num ? Symbolics.Num(transformed) : transformed
+    return ex
+end
+
+_is_positive_int(x) = x isa Integer && x >= 0
+
+# Return matching multiplication operator: :* for symbol, * for function
+_matching_mul(op) = op isa Symbol ? :* : *
+
+# Transform (^).(base, n) to (*).(base, ..., base)
+function _expand_power_broadcast(mul, base, n::Int)
+    n == 0 && return 1
+    n == 1 && return base
+    return Expr(:., mul, Expr(:tuple, fill(base, n)...))
+end
+
+# Transform (^)(base, n) to (*)(base, ..., base)
+function _expand_power_call(mul, base, n::Int)
+    n == 0 && return 1
+    n == 1 && return base
+    return Expr(:call, mul, fill(base, n)...)
 end
 
 """
     should_apply_gpu_transform(init_params)
 
-Return `true` when GPU-specific symbolic rewrites should be applied
+Return true if GPU-specific transforms should be applied.
 
-This gates the power-rewriting logic to GPU code paths only (see #914)
+Checks for CUDA device or explicit environment override.
 """
 
 function should_apply_gpu_transform(init_params)
